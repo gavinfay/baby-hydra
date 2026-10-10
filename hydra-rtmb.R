@@ -99,7 +99,7 @@ parameters$log_surv_q <- matrix(rep(0,Nsp*Nsurvey), byrow=TRUE, nrow = Nsurvey)
 
 baby_hydra_fun <- function(data, parameters) {
   "[<-" <- ADoverload("[<-")
-
+#profvis({
   #make things visible
   getAll(data, parameters, warn=FALSE)
 # procedure section structure
@@ -257,7 +257,7 @@ pred_catchsize_num_yr <- array(0, dim = c(Nsp, Nflt, Nlen, Nyr))
 pred_catch_yr <- array(0, dim = c(Nsp, Nflt, Nyr))
 pred_survey_index_yr <- array(0, dim = c(Nsp, Nsurvey, Nyr))
 pred_surveysize_num_yr <- array(0, dim = c(Nsp, Nsurvey, Nlen, Nyr))
-
+pred_surveydiet_wt_yr <- array(0, dim = c(Nsp, Nlen, Nsp+1, Nyr))
 
 #calc initial states
 N[,,1] <- exp(log_initN)
@@ -308,20 +308,28 @@ for (predsp in 1:Nsp) {
   for (predlen in 1:Nlen) {
     total_food[predsp, predlen, t] <- sum(suitability[predsp, predlen, , ]*weight_mid*N[,,t]) +
       other_food[predsp, t]
+    pred_surveydiet_wt_yr[predsp,predlen,1:Nsp,iyr] <- pred_surveydiet_wt_yr[predsp,predlen,1:Nsp,iyr] + 
+      rowSums(weight_mid * N[, , t] * suitability[predsp, predlen, , ])
+    pred_surveydiet_wt_yr[predsp,predlen,Nsp+1,iyr] <- pred_surveydiet_wt_yr[predsp,predlen,Nsp+1,iyr] +
+      other_food[predsp, t]
   }
 }
 
 M2[ , , t]  <- 0
 for (preysp in 1:Nsp) {
   for (preylen in 1:Nlen) {
-    for (predsp in 1:Nsp) {
-      for (predlen in 1:Nlen) {
-        M2[preysp, preylen, t] <- M2[preysp, preylen, t] +
-          daily_intake[predsp, predlen, t] * (365/Nstep) *
-          N[predsp, predlen, t] * suitability[predsp, predlen, preysp, preylen] /
-          total_food[predsp, predlen, t]
-      }
-    }
+    M2[preysp, preylen, t] <- M2[preysp, preylen, t] + sum(
+      daily_intake[ , , t] * (365/Nstep) *
+      N[ , , t] * suitability[ , , preysp, preylen] /
+      total_food[, , t])
+    # for (predsp in 1:Nsp) {
+    #   for (predlen in 1:Nlen) {
+    #     M2[preysp, preylen, t] <- M2[preysp, preylen, t] +
+    #       daily_intake[predsp, predlen, t] * (365/Nstep) *
+    #       N[predsp, predlen, t] * suitability[predsp, predlen, preysp, preylen] /
+    #       total_food[predsp, predlen, t]
+    #   }
+    # }
   }
 }
 
@@ -386,48 +394,55 @@ for (isp in 1:Nsp) {
 nll <- 0
 
 #survey index
-pred_vec <- pred_survey_index_yr[obs_surveyindex[,1], obs_surveyindex[,2], obs_surveyindex[,3]] + 0.0001 #small constant?
+pred_vec <- pred_survey_index_yr[as.matrix(obs_surveyindex[,1:3])] + 0.0001 #small constant?
 nll <- nll - sum(dnorm(obs_surveyindex[,4], log(pred_vec), obs_surveyindex[,5], log = TRUE))
 
 #survey size comp
+propdf <- as.matrix(obs_surveysize[,-(1:4)])
 for (iobs in 1:nrow(obs_surveysize)) {
   isp <- obs_surveysize[iobs,1]
   isurv <-obs_surveysize[iobs,2]
   iyr <- obs_surveysize[iobs,3]
-  temp_obs <- as.numeric(obs_surveysize[iobs,4]*obs_surveysize[iobs,-(1:4)]/sum(obs_surveysize[iobs,-(1:4)]))
+  temp_obs <- as.numeric(obs_surveysize[iobs,4]*propdf[iobs,]/sum(propdf[iobs,]))
+  #temp_obs <- as.numeric(obs_surveysize[iobs,4]*obs_surveysize[iobs,-(1:4)]/sum(obs_surveysize[iobs,-(1:4)]))
   temp_pred <- pred_surveysize_num_yr[isp,isurv,,iyr]/sum(pred_surveysize_num_yr[isp,isurv,,iyr])
   #print(class(temp_obs))
   nll <- nll - dmultinom(temp_obs, prob = temp_pred, log = TRUE)
 }
 
 #catch
-pred_vec <- pred_catch_yr[obs_catch[,1], obs_catch[,2], obs_catch[,3]] + 0.0001
+pred_vec <- pred_catch_yr[as.matrix(obs_catch[,1:3])] + 0.0001
 nll <- nll - sum(dnorm(obs_catch[,4], log(pred_vec), obs_catch[,5], log = TRUE))
 
 #catch size comp
+propdf <- as.matrix(obs_catchsize[,-(1:4)])
 for (iobs in 1:nrow(obs_catchsize)) {
   isp <- obs_catchsize[iobs,1]
   iflt <- obs_catchsize[iobs,2]
   iyr <- obs_catchsize[iobs,3]
   if (sum(obs_catchsize[iobs,-(1:4)])>0) {
-  temp_obs <- as.numeric(obs_catchsize[iobs,4]*obs_catchsize[iobs,-(1:4)]/sum(obs_catchsize[iobs,-(1:4)]))
+    temp_obs <- as.numeric(obs_catchsize[iobs,4]*propdf[iobs,]/sum(propdf[iobs,]))
+    #temp_obs <- as.numeric(obs_catchsize[iobs,4]*obs_catchsize[iobs,-(1:4)]/sum(obs_catchsize[iobs,-(1:4)]))
   temp_pred <- pred_catchsize_num_yr[isp,iflt,,iyr]/sum(pred_catchsize_num_yr[isp,iflt,,iyr])
   #print(class(temp_obs))
   nll <- nll - dmultinom(temp_obs, prob = temp_pred, log = TRUE)
   }
 }
 
-# #diet composition
-# for (iobs in 1:nrow(obs_surveydietcomp)) {
-#   ipred <- obs_surveydietcomp[iobs,1]
-#   isurv <-obs_surveydietcomp[iobs,2]
-#   iyr <- obs_surveydietcomp[iobs,3]
-#   ipredlen <- obs_surveydietcomp[iobs,4]
-#   temp_obs <- as.numeric(obs_surveydietcomp[iobs,5]*obs_surveydietcomp[iobs,-(1:5)]/sum(obs_surveydietcomp[iobs,-(1:5)]))
-#   temp_pred <- pred_surveydiet_wt_yr[isp,isurv,ipredlen,,iyr]/sum(pred_surveydiet_wt_yr[ipred,isurv,ipredlen,,iyr])
-#   #print(class(temp_obs))
-#   nll <- nll - dmultinom(temp_obs, prob = temp_pred, log = TRUE)
-# }
+#diet composition
+pred_surveydiet_wt_yr <- pred_surveydiet_wt_yr/Nstep  #change to include first t of bext year, same for other quantities
+propdf <- as.matrix(obs_surveydietcomp[,-(1:5)])
+for (iobs in 1:nrow(obs_surveydietcomp)) {
+  ipred <- obs_surveydietcomp[iobs,1]
+  isurv <-obs_surveydietcomp[iobs,2]
+  iyr <- obs_surveydietcomp[iobs,3]
+  ipredlen <- obs_surveydietcomp[iobs,4]
+  temp_obs <- as.numeric(obs_surveydietcomp[iobs,5]*propdf[iobs,]/sum(propdf[iobs,]))
+  #temp_obs <- as.numeric(obs_surveydietcomp[iobs,5]*obs_surveydietcomp[iobs,-(1:5)]/sum(obs_surveydietcomp[iobs,-(1:5)]))
+  temp_pred <- pred_surveydiet_wt_yr[isp,ipredlen,,iyr]/sum(pred_surveydiet_wt_yr[ipred,ipredlen,,iyr])
+  #print(class(temp_obs))
+  nll <- nll - dmultinom(temp_obs, prob = temp_pred, log = TRUE)
+}
 
 #recruitment
 for (isp in 1:Nsp) {
@@ -436,9 +451,12 @@ for (isp in 1:Nsp) {
 
 
  nll
-} #end baby_hydra_fun
+#}) #end prof vis
+ } #end baby_hydra_fun
 
-baby_hydra_fun(data, parameters)
+system.time(
+  baby_hydra_fun(data, parameters)
+)
 
 cmb <- function(f, d) function(p) f(p, d)
 
