@@ -15,6 +15,9 @@ data$Nsurvey <- 4 #hydra_data$Nsurveys
 data$Nyr <- hydra_data$Nyrs
 data$Ntime <- hydra_data$Nyr * data$Nstep
 data$t_yrs <- rep(1:(data$Nyr/data$Nstep), each = data$Nstep)
+data$rec_type <- rep(4,data$Nsp)
+data$rec_type[c(4,9)] <- 9
+data$rec_lag <- rep(0, data$Nsp)
 
 Ntime <- data$Ntime
 Nsp <- data$Nsp
@@ -58,7 +61,31 @@ data$obs_surveydietcomp <- as.data.frame(hydra_data$observedSurvDiet[,c(3,1,2,4:
 data$obs_catch <- as.data.frame(hydra_data$observedCatch[,c(4,1,3,5,6)])
 data$obs_catchsize <- as.data.frame(hydra_data$observedCatchSize[,c(4,1,3,6:ncol(hydra_data$observedCatchSize))])
 
+#growth
+data$log_vb_Linf <- log(as.numeric(hydra_data$growthLinf))
+data$beta_growth <- rep(0, Nsp)
+data$log_vb_k  <- log(as.numeric(hydra_data$growthK))
 
+## growth
+#VB growth (equation 7)
+phi <- array(0,dim=c(Nsp,Nlen,Ntime))
+for (isp in 1:Nsp) {
+  for (ilen in 1:Nlen) {
+    for (t in 1:Ntime) {
+      numerator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth[isp]*data$covar_growth[t])-data$lbin_lo[isp,ilen]
+      denominator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth[isp]*data$covar_growth[t])-data$lbin_hi[isp,ilen]
+      
+      if (numerator <0 | denominator < 0) {
+        phi[isp, ilen, t] <- 0
+      }
+      else
+      {
+        phi[isp, ilen, t] <- min(c(1,(exp(data$log_vb_k[isp])/data$Nstep)/log(numerator/denominator)))
+      }
+    }
+  }
+}
+data$phi <- phi
 
 #parameter list object
 parameters <- list()
@@ -73,20 +100,21 @@ parameters$log_psi_pref <- log(hydra_data$M2sizePrefMu) #rep(log(0.5), Nsp)
 parameters$log_intake_a <- log(hydra_data$intakeAlpha) #rep(log(0.2), Nsp)
 parameters$log_intake_b <- log(hydra_data$intakeBeta)  #rep(log(0.2), Nsp)
 
-parameters$log_vb_Linf <- log(as.numeric(hydra_data$growthLinf))
-parameters$beta_growth <- rep(0, Nsp)
-parameters$log_vb_k  <- rep(log(as.numeric(hydra_data$growthK)), Nsp)
+# parameters$log_vb_Linf <- log(as.numeric(hydra_data$growthLinf))
+# parameters$beta_growth <- rep(0, Nsp)
+# parameters$log_vb_k  <- log(as.numeric(hydra_data$growthK))
 
-parameters$log_mat_a <- rep(log(20),Nsp)
-parameters$log_mat_b <- rep(log(4), Nsp)
+parameters$log_mat_a <-   c(-7.042938, -11.675085, -13.348819, -9.699430, -8.288921, -12.303436, -18.403205, -11.195376, -30.699378, -13.916245) #rep(log(20),Nsp)
+parameters$log_mat_b <- c(0.1567660, 0.5506679, 0.5366664, 0.2710055, 0.2399190, 0.5340524, 0.2629197, 0.4163284, 0.4385523, 0.4810249) #rep(log(4), Nsp)
 parameters$beta_maturity <- rep(0, Nsp)
 
 parameters$log_initN <- matrix(rep(4,Nsp*Nlen),byrow=TRUE,nrow = Nsp)
 
-parameters$log_ricker_alpha <- rep(log(4e-06), Nsp)
-parameters$log_ricker_beta <- rep(log(1), Nsp)
+parameters$log_ricker_alpha <- log(c(0.000144016, 0.028481469, 0.001878931, 0.001, 0.001452908, 0.04049447, 0.001887205, 0.003794726, 0.001, 0.005720557)) #rep(log(4e-06), Nsp)
+parameters$log_ricker_beta <- log(c(0.000009382552, 0.000012448889, 0.000004621928, 1, 0.000005074691, 0.000006947264, 0.000041797429, 0.000106158391, 1, 0.000036842307)) #rep(log(1), Nsp)
 parameters$beta_recruits <- rep(0, Nsp)
 parameters$log_avg_recruit <- rep(5, Nsp)
+parameters$log_avg_recruit[c(4,9)] <- c(0.88, 2.4)
 parameters$log_sigma_r <- rep(log(0.5), Nsp)
 parameters$rec_devs <- matrix(rep(0,Nsp*Nyr),byrow=TRUE,nrow = Nsp)
 
@@ -114,8 +142,8 @@ ricker_alpha <- exp(log_ricker_alpha)
 ricker_beta <- exp(log_ricker_beta)
 avg_recruit <- exp(log_avg_recruit)
 ## maturity
-mat_a <- exp(log_mat_a)
-mat_b <- exp(log_mat_b)
+mat_a <- log_mat_a #exp(log_mat_a)
+mat_b <- log_mat_b #exp(log_mat_b)
 ## growth
 vb_k <- exp(log_vb_k)
 vb_Linf <- exp(log_vb_Linf)
@@ -143,8 +171,9 @@ fish_sel <- array(1, dim=c(Nflt, Nsp, Nlen))
 for (iflt in 1:Nflt) {
     fish_sel[iflt,,] = 1/(1+exp(neglog19*(lbin_mid-fishsel_par[1,iflt])/fishsel_par[2,iflt]))
     for (isp in 1:Nsp) {
-      fish_sel[iflt,isp,] <- fish_sel[iflt,isp,]/max(fish_sel[iflt,isp,])
+     fish_sel[iflt,isp,] <- fish_sel[iflt,isp,]/max(fish_sel[iflt,isp,])
     }
+    #fish_sel[iflt,,] <- fish_sel[iflt,,]/max(fish_sel[iflt,,])
 }
 ## q
 fishery_q <- array(0, dim = c(Nflt, Nsp))
@@ -211,32 +240,35 @@ for (predsp in 1:Nsp) {
 }
 
 
-## growth
-#VB growth (equation 7)
-phi <- array(0,dim=c(Nsp,Nlen,Ntime))
-for (isp in 1:Nsp) {
-  for (ilen in 1:Nlen) {
-    for (t in 1:Ntime) {
-    numerator <- vb_Linf[isp]*exp(beta_growth[isp]*covar_growth[t])-lbin_lo[isp,ilen]
-    denominator <- vb_Linf[isp]*exp(beta_growth[isp]*covar_growth[t])-lbin_hi[isp,ilen]
+# ## growth
+# #VB growth (equation 7)
+# phi <- array(0,dim=c(Nsp,Nlen,Ntime))
+# for (isp in 1:Nsp) {
+#   for (ilen in 1:Nlen) {
+#     for (t in 1:Ntime) {
+#     numerator <- vb_Linf[isp]*exp(beta_growth[isp]*covar_growth[t])-lbin_lo[isp,ilen]
+#     denominator <- vb_Linf[isp]*exp(beta_growth[isp]*covar_growth[t])-lbin_hi[isp,ilen]
+# 
+#     if (numerator <0 | denominator < 0) {
+#       phi[isp, ilen, t] <- 0
+#     }
+#     else
+#     {
+#       phi[isp, ilen, t] <- vb_k[isp]/log(numerator/denominator)
+#     }
+#     }
+#   }
+# }
 
-    if (numerator <0 | denominator < 0) {
-      phi[isp, ilen, t] <- 0
-    }
-    else
-    {
-      phi[isp, ilen, t] <- vb_k[isp]/log(numerator/denominator)
-    }
-    }
-  }
-}
 ## maturity
 #maturity (equation 9)
 maturity <- array(0, dim = c(Nsp,Nlen,Ntime))
+for (t in 1:Ntime) {
 for (isp in 1:Nsp) {
   for (ilen in 1:Nlen) {
     maturity[isp, ilen, t] <- 1/(1 + exp(-1*(mat_a[isp]+mat_b[isp]*lbin_mid[isp, ilen])+beta_maturity[isp]*covar_maturity[t]))
   }
+}
 }
 
 # storage variables for quantities that are functions of the states
@@ -277,17 +309,17 @@ if (t > 1) {
 ##recruitment if not t = 1
 if (t > 1) {
   #add recruits if first time step of year
-  if ((t %% Nstep)-1 == 0) {
+  if (Nstep == 1 | (t %% Nstep)-1 == 0) {
     for (isp in 1:Nsp) {
 
       ##Ricker (equation 10)
-      if (rec_type[isp == 4]) {
+      if (rec_type[isp] == 4) {
         recruits[isp, iyr] <- ricker_alpha[isp]*ssb[isp, iyr - rec_lag[isp]] *
           exp(-1*ricker_beta[isp]*ssb[isp, iyr] + beta_recruits[isp]*covar_recruitment[iyr])
       }
 
       ##Average plus devs (equation 8)
-      if (rec_type[isp == 9]) {
+      if (rec_type[isp] == 9) {
         recruits[isp, iyr] <- avg_recruit[isp] * exp(beta_recruits[isp]*covar_recruitment[iyr])
       }
 
@@ -353,7 +385,10 @@ for (isp in 1:Nsp) {
 }
 
 ##SSB
-ssb[isp, iyr] <- sum(maturity[isp, , t]*weight_mid[isp,]*N[isp,,t],na.rm = TRUE)
+for (isp in 1:Nsp) {
+  ssb[isp, iyr] <- sum(maturity[isp, , t]*weight_mid[isp,]*N[isp,,t],na.rm = TRUE)  
+}
+
 
 ##movement
 
@@ -449,33 +484,59 @@ for (isp in 1:Nsp) {
   nll <- nll - sum(dnorm(rec_devs[isp,], 0, sigma_r[isp], log = TRUE))
 }
 
-
+ REPORT(ssb)
  nll
 #}) #end prof vis
  } #end baby_hydra_fun
 
-system.time(
+#system.time(
   baby_hydra_fun(data, parameters)
-)
+#)
 
 cmb <- function(f, d) function(p) f(p, d)
 
 # ## Make a function object
-# obj <- MakeADFun(cmb(baby_hydra_fun, data), parameters,
-#                  #random = c("rdev"),
-#                  map = list(logM = factor(NA),
-#                             #logfracR1 = factor(NA),
-#                             #logith = factor(NA),
-#                             logSigmaC = factor(NA), #)) #,
-#                             logSigmaI = factor(NA),
-#                             logSigmaR = factor(NA)#,
-#                             #recdev = factor(rep(NA,nrow(catch)))
-#                  ))
+obj <- MakeADFun(cmb(baby_hydra_fun, data), parameters,
+                 #random = c("rdev"),
+                 map = list(
+                   #logM = factor(NA),
+                   #                             #logfracR1 = factor(NA),
+                   #                             #logith = factor(NA),
+                   #                             logSigmaC = factor(NA), #)) #,
+                   #                             logSigmaI = factor(NA),
+                   #                             logSigmaR = factor(NA)#,
+                   #                             #recdev = factor(rep(NA,nrow(catch)))
+                   log_F_flt = factor(array(rep(NA,Nyr*Nflt),dim = c(Nflt, Nyr))),
+                   log_fishsel_par = factor(matrix(c(rep(NA,Nflt),rep(NA,Nflt)))),
+                   log_fish_q = factor(rep(NA, Ntarget - Nflt)),
+                   logit_vulnerability = factor(matrix(rep(NA,Nsp*Nsp),nrow = Nsp)),
+                   log_sigma_predpref = factor(rep(NA,Nsp)),
+                   log_psi_pref = factor(rep(NA,Nsp)),
+                   log_intake_a = factor(rep(NA,Nsp)),
+                   log_intake_b = factor(rep(NA,Nsp)),
+                   #log_vb_Linf = factor(rep(NA,Nsp)),
+                   #beta_growth  = factor(rep(NA,Nsp)),
+                   #log_vb_k = factor(rep(NA,Nsp)),
+                   log_mat_a = factor(rep(NA,Nsp)),
+                   log_mat_b = factor(rep(NA,Nsp)),
+                   beta_maturity = factor(rep(NA,Nsp)),
+                   #log_initN = factor(matrix(rep(NA,Nsp*Nlen),byrow=TRUE,nrow = Nsp)),
+                   log_ricker_alpha = factor(rep(NA,Nsp)),
+                   log_ricker_beta = factor(rep(NA,Nsp)),
+                   beta_recruits = factor(rep(NA,Nsp)),
+                   log_avg_recruit = factor(rep(NA,Nsp)),
+                   log_sigma_r = factor(rep(NA,Nsp)),
+                   rec_devs = factor(matrix(rep(NA,Nsp*Nyr),byrow=TRUE,nrow = Nsp)),
+                   log_M1 = factor(rep(NA,Nsp)),
+                   log_other_food  = factor(rep(NA,Nsp)),
+                   log_survsel_par = factor(matrix(c(rep(NA,Nsurvey),rep(NA,Nsurvey)), byrow = TRUE, nrow = 2)),
+                   log_surv_q = factor(matrix(rep(NA,Nsp*Nsurvey), byrow=TRUE, nrow = Nsurvey))
+                 ))
 # #control=list(eval.max=10000,iter.max=10000,rel.tol=1e-15))
 #
 # ## Call function minimizer
-# opt <- nlminb(obj$par, obj$fn, obj$gr, control= list(eval.max = 10000,
-#                                                      iter.max = 10000))
+ opt <- nlminb(obj$par, obj$fn, obj$gr, control= list(eval.max = 10000,
+                                                      iter.max = 10000))
 #
 # ## Get parameter uncertainties and convergence diagnostics
 # sdr <- sdreport(obj)
