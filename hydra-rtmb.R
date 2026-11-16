@@ -28,7 +28,7 @@ Nsurvey <- data$Nsurvey
 Ntarget <- Nsp*Nflt #placeholder
 
 #recruitment
-data$rec_type <- hydra_data$recType. # 4 = Ricker, 9 = avg rec.
+#data$rec_type <- hydra_data$recType # 4 = Ricker, 9 = avg rec.
 
 #fishery targeting
 fishind <- hydra_data$indicatorFisheryq
@@ -63,7 +63,8 @@ data$obs_catchsize <- as.data.frame(hydra_data$observedCatchSize[,c(4,1,3,6:ncol
 
 #growth
 data$log_vb_Linf <- log(as.numeric(hydra_data$growthLinf))
-data$beta_growth <- rep(0, Nsp)
+data$beta_growth_linf <- rep(0, Nsp)
+data$beta_growth_k <- rep(0, Nsp)
 data$log_vb_k  <- log(as.numeric(hydra_data$growthK))
 
 ## growth
@@ -72,15 +73,16 @@ phi <- array(0,dim=c(Nsp,Nlen,Ntime))
 for (isp in 1:Nsp) {
   for (ilen in 1:Nlen) {
     for (t in 1:Ntime) {
-      numerator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth[isp]*data$covar_growth[t])-data$lbin_lo[isp,ilen]
-      denominator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth[isp]*data$covar_growth[t])-data$lbin_hi[isp,ilen]
+      numerator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth_linf[isp]*data$covar_growth[t])-data$lbin_lo[isp,ilen]
+      denominator <- exp(data$log_vb_Linf[isp])*exp(data$beta_growth_linf[isp]*data$covar_growth[t])-data$lbin_hi[isp,ilen]
       
-      if (numerator <0 | denominator < 0) {
+      if (numerator < 0 | denominator < 0) {
         phi[isp, ilen, t] <- 0
       }
       else
       {
-        phi[isp, ilen, t] <- min(c(1,(exp(data$log_vb_k[isp])/data$Nstep)/log(numerator/denominator)))
+        #phi[isp, ilen, t] <- min(c(1,(exp(data$log_vb_k[isp])/data$Nstep)/log(numerator/denominator)))
+        phi[isp, ilen, t] <- min(c(1,(exp(data$log_vb_k[isp]+data$beta_growth_k[isp]*data$covar_growth[t])/data$Nstep)/log(numerator/denominator)))
       }
     }
   }
@@ -272,7 +274,7 @@ for (isp in 1:Nsp) {
 }
 
 # storage variables for quantities that are functions of the states
-N <- array(0, dim = c(Nsp,Nlen,Ntime))
+N <- array(0, dim = c(Nsp,Nlen,(Ntime+1)))
 S <- array(0, dim = c(Nsp,Nlen,Ntime))
 recruits <- array(0, dim = c(Nsp, Nyr))
 M2 <- array(0, dim = c(Nsp,Nlen,Ntime))
@@ -293,6 +295,7 @@ pred_surveydiet_wt_yr <- array(0, dim = c(Nsp, Nlen, Nsp+1, Nyr))
 
 #calc initial states
 N[,,1] <- exp(log_initN)
+N_tot[,,1] <- N[,,1]
 
 #loop over time
 for (t in 1:Ntime) {
@@ -301,9 +304,17 @@ for (t in 1:Ntime) {
 ##year
 iyr <- t_yrs[t]
 
-## increment Nvec
-if (t > 1) {
-  N[,,t] <- N[,,t-1]
+# #cumulative numbers in year (for predicted quantities)
+# N_tot[isp,,iyr] <- N_tot[isp,,iyr] + N[isp,,t]
+
+# ## increment Nvec
+# if (t > 1) {
+#   N[,,t] <- N[,,t-1]
+# }
+
+##SSB
+for (isp in 1:Nsp) {
+  ssb[isp, iyr] <- sum(maturity[isp, , t]*weight_mid[isp,]*N[isp,,t],na.rm = TRUE)  
 }
 
 ##recruitment if not t = 1
@@ -380,14 +391,10 @@ for (isp in 1:Nsp) {
       (1 - phi[isp, ilen, t])*S[isp, ilen, t]*N[isp, ilen, t]
   }
   Ntemp[1] <- (1 - phi[isp, 1, t])*S[isp, 1, t]*N[isp, 1, t]
-  N[isp,,t] <- Ntemp
-  N_tot[isp,,iyr] <- N_tot[isp,,iyr] + N[isp,,t]
+  N[isp,,t+1] <- Ntemp
+  N_tot[isp,,iyr] <- N_tot[isp,,iyr] + N[isp,,t+1]
 }
 
-##SSB
-for (isp in 1:Nsp) {
-  ssb[isp, iyr] <- sum(maturity[isp, , t]*weight_mid[isp,]*N[isp,,t],na.rm = TRUE)  
-}
 
 
 ##movement
@@ -415,7 +422,7 @@ for (isp in 1:Nsp) {
 for (isp in 1:Nsp) {
   for (isurv in 1:Nsurvey) {
     for (iyr in 1:Nyr) {
-      pred_survey_index_yr[isp, isurv, iyr] <- sum(N_tot[isp, , iyr] * survey_sel[isurv, isp, ] * surv_q[isurv, isp] * weight_mid[isp, ])/ Nstep #in biomass
+      pred_survey_index_yr[isp, isurv, iyr] <- sum(N_tot[isp, , iyr] * survey_sel[isurv, isp, ] * surv_q[isurv, isp] * weight_mid[isp, ])/ (Nstep+1) #in biomass
       pred_surveysize_num_yr[isp, isurv, , iyr] <- N_tot[isp, , iyr] * survey_sel[isurv, isp, ]
       #pred_surveysize_num_yr[isp, isurv, , iyr] <- pred_surveysize_num_yr[isp, isurv, , iyr]/sum(pred_surveysize_num_yr[isp, isurv, , iyr])
       #for (ipredlen in 1:Nsp) {
@@ -465,7 +472,7 @@ for (iobs in 1:nrow(obs_catchsize)) {
 }
 
 #diet composition
-pred_surveydiet_wt_yr <- pred_surveydiet_wt_yr/Nstep  #change to include first t of bext year, same for other quantities
+pred_surveydiet_wt_yr <- pred_surveydiet_wt_yr/Nstep  #change to include first t of next year, same for other quantities
 propdf <- as.matrix(obs_surveydietcomp[,-(1:5)])
 for (iobs in 1:nrow(obs_surveydietcomp)) {
   ipred <- obs_surveydietcomp[iobs,1]
@@ -489,9 +496,9 @@ for (isp in 1:Nsp) {
 #}) #end prof vis
  } #end baby_hydra_fun
 
-#system.time(
+system.time(
   baby_hydra_fun(data, parameters)
-#)
+)
 
 cmb <- function(f, d) function(p) f(p, d)
 
